@@ -5,8 +5,8 @@ from collections import defaultdict
 
 # ---- CONFIG ----
 FILE = "export.xml"  # Your Apple Health export file
-START = datetime(2023, 1, 1, tzinfo=timezone.utc)
-END   = datetime(2023, 12, 31, tzinfo=timezone.utc)
+START = datetime(2025, 6, 23, tzinfo=timezone.utc)
+END   = datetime(2025, 8, 15, tzinfo=timezone.utc)
 OUTPUT_CSV = "daily_totals.csv"
 # ----------------
 
