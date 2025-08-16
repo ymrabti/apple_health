@@ -7,14 +7,16 @@ import statistics
 
 # ---- CONFIG ----
 FILE = "export.xml"
-START = datetime(2025, 6, 23, tzinfo=timezone.utc)
-END = datetime(2025, 8, 15, tzinfo=timezone.utc)
+START = datetime(2025, 8, 1, tzinfo=timezone.utc)
+END = datetime(2025, 8, 14, tzinfo=timezone.utc)
 OUTPUT_XLSX = "activity_summary.xlsx"
 # ----------------
 
 
 tree = ET.parse(FILE)
 root = tree.getroot()
+
+
 def format_number(value, width=10):
     """
     Format a number with:
@@ -96,14 +98,13 @@ for week in sorted(weekly_data.keys()):
 
 # --- Daily Statistics Sheet ---
 stats_sheet = wb.create_sheet(title="Daily Stats Summary")
-stats_sheet.append(["Metric", "Max", "Min", "Median", "Average"])
-
+stats_sheet.append(["Metric", "Sum", "Max", "Min", "Median", "Average"])
 # Prepare lists
 steps_list = [data["steps"] for data in daily_data.values()]
 distance_list = [data["distance"] for data in daily_data.values()]
 calories_list = [data["calories"] for data in daily_data.values()]
 
-# Write statistics
+# Write statistics with sum
 for name, lst in [
     ("Steps", steps_list),
     ("Distance (km)", distance_list),
@@ -112,6 +113,7 @@ for name, lst in [
     stats_sheet.append(
         [
             name,
+            format_number(round(sum(lst), 2)),
             format_number(round(max(lst), 2)),
             format_number(round(min(lst), 2)),
             format_number(round(statistics.median(lst), 2)),
@@ -125,6 +127,67 @@ for sheet in [daily_sheet, weekly_sheet, stats_sheet]:
         max_length = max(len(str(cell.value)) for cell in col)
         sheet.column_dimensions[get_column_letter(col[0].column)].width = max_length + 2
 
+# --- Daily Statistics Sheet ---
+stats_sheet = wb.create_sheet(title="Daily Stats Summary Enhanced")
+stats_sheet.append(
+    [
+        "Metric",
+        "Sum",
+        "Max",
+        "Day Hit Max",
+        "Min",
+        "Day Hit Min",
+        "Median",
+        "Average",
+    ]
+)
+
+# Prepare lists and corresponding dates
+steps_list = [data["steps"] for data in daily_data.values()]
+steps_dates = list(daily_data.keys())
+distance_list = [data["distance"] for data in daily_data.values()]
+distance_dates = list(daily_data.keys())
+calories_list = [data["calories"] for data in daily_data.values()]
+calories_dates = list(daily_data.keys())
+
+
+def get_day_of_value(lst, dates, value):
+    """Return the first date corresponding to the value"""
+    for v, d in zip(lst, dates):
+        if v == value:
+            return d.isoformat()
+    return ""
+
+metrics = [
+    ("Steps", steps_list, steps_dates),
+    ("Distance (km)", distance_list, distance_dates),
+    ("Active Calories (kcal)", calories_list, calories_dates),
+]
+
+for name, lst, dates in metrics:
+    max_val = max(lst)
+    min_val = min(lst)
+    stats_sheet.append(
+        [
+            name,
+            format_number(round(sum(lst), 2)),
+            format_number(round(max_val, 2)),
+            get_day_of_value(lst, dates, max_val),
+            format_number(round(min_val, 2)),
+            get_day_of_value(lst, dates, min_val),
+            format_number(round(statistics.median(lst), 2)),
+            format_number(round(statistics.mean(lst), 2)),
+        ]
+    )
+stats_sheet.append(
+    [
+        "Date Range",
+        "Start Date",
+        min(daily_data.keys()).isoformat(),
+        "End Date",
+        max(daily_data.keys()).isoformat(),
+    ]
+)
 # ---- Save Excel ----
 wb.save(OUTPUT_XLSX)
 print(f"Daily, weekly, and daily stats summary exported to '{OUTPUT_XLSX}'")
