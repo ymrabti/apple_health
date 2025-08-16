@@ -3,17 +3,28 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from openpyxl import Workbook
 from openpyxl.utils import get_column_letter
-import isoweek
+import statistics
 
 # ---- CONFIG ----
-FILE = "export.xml"  # Your Apple Health export file
+FILE = "export.xml"
 START = datetime(2025, 6, 23, tzinfo=timezone.utc)
-END   = datetime(2025, 8, 15, tzinfo=timezone.utc)
+END = datetime(2025, 8, 15, tzinfo=timezone.utc)
 OUTPUT_XLSX = "activity_summary.xlsx"
 # ----------------
 
+
 tree = ET.parse(FILE)
 root = tree.getroot()
+def format_number(value, width=10):
+    """
+    Format a number with:
+    - Thousand separator (.)
+    - Decimal comma (,)
+    - Left-padded with spaces to a total width
+    """
+    formatted = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    return formatted.rjust(width, " ")
+
 
 # ---- Aggregate daily data ----
 daily_data = defaultdict(lambda: {"steps": 0, "distance": 0, "calories": 0})
@@ -24,7 +35,7 @@ for record in root.findall(".//Record"):
 
     try:
         dt = datetime.fromisoformat(startDate.replace(" +", "+"))
-    except Exception:
+    except ValueError:
         continue
 
     if START <= dt <= END:
@@ -44,9 +55,8 @@ for record in root.findall(".//Record"):
 
 # ---- Aggregate weekly data ----
 weekly_data = defaultdict(lambda: {"steps": 0, "distance": 0, "calories": 0})
-
 for day, data in daily_data.items():
-    year, week, _ = day.isocalendar()  # ISO week
+    year, week, _ = day.isocalendar()
     week_key = f"{year}-W{week:02d}"
     weekly_data[week_key]["steps"] += data["steps"]
     weekly_data[week_key]["distance"] += data["distance"]
@@ -65,8 +75,8 @@ for day in sorted(daily_data.keys()):
         [
             day.isoformat(),
             int(data["steps"]),
-            round(data["distance"], 2),
-            round(data["calories"], 2),
+            format_number(round(data["distance"], 2)),
+            format_number(round(data["calories"], 2)),
         ]
     )
 
@@ -79,17 +89,42 @@ for week in sorted(weekly_data.keys()):
         [
             week,
             int(data["steps"]),
-            round(data["distance"], 2),
-            round(data["calories"], 2),
+            format_number(round(data["distance"], 2)),
+            format_number(round(data["calories"], 2)),
+        ]
+    )
+
+# --- Daily Statistics Sheet ---
+stats_sheet = wb.create_sheet(title="Daily Stats Summary")
+stats_sheet.append(["Metric", "Max", "Min", "Median", "Average"])
+
+# Prepare lists
+steps_list = [data["steps"] for data in daily_data.values()]
+distance_list = [data["distance"] for data in daily_data.values()]
+calories_list = [data["calories"] for data in daily_data.values()]
+
+# Write statistics
+for name, lst in [
+    ("Steps", steps_list),
+    ("Distance (km)", distance_list),
+    ("Active Calories (kcal)", calories_list),
+]:
+    stats_sheet.append(
+        [
+            name,
+            format_number(round(max(lst), 2)),
+            format_number(round(min(lst), 2)),
+            format_number(round(statistics.median(lst), 2)),
+            format_number(round(statistics.mean(lst), 2)),
         ]
     )
 
 # --- Adjust column widths ---
-for sheet in [daily_sheet, weekly_sheet]:
+for sheet in [daily_sheet, weekly_sheet, stats_sheet]:
     for col in sheet.columns:
         max_length = max(len(str(cell.value)) for cell in col)
         sheet.column_dimensions[get_column_letter(col[0].column)].width = max_length + 2
 
 # ---- Save Excel ----
 wb.save(OUTPUT_XLSX)
-print(f"Daily and weekly statistics exported to '{OUTPUT_XLSX}'")
+print(f"Daily, weekly, and daily stats summary exported to '{OUTPUT_XLSX}'")
