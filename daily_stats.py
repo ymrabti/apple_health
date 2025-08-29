@@ -165,8 +165,8 @@ def exportExcel(START, END):
 
 # --- 1️⃣ Parse CMD Arguments ---
 if len(sys.argv) != 3:
-    print("Usage: python export_stats.py <start_date> <end_date>")
-    print("Example: python export_stats.py 2025-08-01 2025-08-16")
+    print("Usage: python daily_stats.py <start_date> <end_date>")
+    print("Example: python daily_stats.py 2025-08-01 2025-08-28")
     sys.exit(1)
 
 try:

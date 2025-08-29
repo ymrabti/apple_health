@@ -7,7 +7,7 @@ root = tree.getroot()
 
 # Period to sum
 start = datetime(2025, 6, 30, tzinfo=timezone.utc)
-end   = datetime(2025, 8, 15, tzinfo=timezone.utc)
+end   = datetime(2025, 8, 18, tzinfo=timezone.utc)
 
 # Data categories we want
 types = {
@@ -21,10 +21,8 @@ for record in root.findall('Record'):
     if rtype in types:
         dt = datetime.fromisoformat(record.attrib['startDate'].replace(' +0100', '+01:00'))
         if start <= dt <= end:
-            if record.attrib['unit']=='km':
-                print(record.attrib)
             types[rtype] += float(record.attrib['value'])
 
-print("Steps:", types['HKQuantityTypeIdentifierStepCount'])
-print("Distance (km):", types['HKQuantityTypeIdentifierDistanceWalkingRunning'])
-print("Active Calories (kcal):", types['HKQuantityTypeIdentifierActiveEnergyBurned'])
+print("Steps:", round(types['HKQuantityTypeIdentifierStepCount'], 2))
+print("Distance (km):", round(types['HKQuantityTypeIdentifierDistanceWalkingRunning'], 2))
+print("Active Calories (kcal):", round(types['HKQuantityTypeIdentifierActiveEnergyBurned'], 2))
