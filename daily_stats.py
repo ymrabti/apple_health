@@ -1,15 +1,20 @@
+"""
+Apply daily aggregation and export to Excel file with three sheets:
+1. Daily totals (Steps, Distance, Active Calories)
+2. Weekly totals (Steps, Distance, Active Calories)
+3. Daily statistics summary (Sum, Max, Min, Median, Average for each metric)
+4. Date range of the data
+"""
+
 import sys
+import statistics
 from datetime import datetime, timezone, time
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from openpyxl import Workbook
-from openpyxl.utils import get_column_letter
-import statistics
 
 # ---- CONFIG ----
 FILE = "export.xml"
-START = datetime(2025, 8, 1, tzinfo=timezone.utc)
-END = datetime(2025, 8, 14, tzinfo=timezone.utc)
 # ----------------
 
 
@@ -28,20 +33,21 @@ def format_number(value, width=10):
     return formatted.rjust(width, " ")
 
 
-def exportExcel(START, END):
+def export_excel(_start, _end):
+    """Export daily and weekly aggregated data to an Excel file."""
     # ---- Aggregate daily data ----
     daily_data = defaultdict(lambda: {"steps": 0, "distance": 0, "calories": 0})
 
     for record in root.findall(".//Record"):
         dtype = record.attrib.get("type")
-        startDate = record.attrib.get("startDate")
 
         try:
-            dt = datetime.fromisoformat(startDate.replace(" +", "+"))
+            record_start_date = record.attrib.get("startDate")
+            dt = datetime.fromisoformat(record_start_date.replace(" +", "+"))
         except ValueError:
             continue
 
-        if START <= dt <= END:
+        if _start <= dt <= _end:
             value_str = record.attrib.get("value", "0")
             try:
                 value = float(value_str)
@@ -157,10 +163,10 @@ def exportExcel(START, END):
             max(daily_data.keys()).isoformat(),
         ]
     )
-    OUTPUT_XLSX = f"activity_summary_{START.date()}-{END.date()}.xlsx"
+    output_xlsx = f"activity_summary_{_start.date()}-{_end.date()}.xlsx"
     # ---- Save Excel ----
-    wb.save(OUTPUT_XLSX)
-    print(f"Daily, weekly, and daily stats summary exported to '{OUTPUT_XLSX}'")
+    wb.save(output_xlsx)
+    print(f"Daily, weekly, and daily stats summary exported to '{output_xlsx}'")
 
 
 # --- 1️⃣ Parse CMD Arguments ---
@@ -176,7 +182,7 @@ try:
     end_date = datetime.combine(
         datetime.strptime(sys.argv[2], "%Y-%m-%d").date(), time.max, tzinfo=timezone.utc
     )
-    exportExcel(start_date, end_date)
+    export_excel(start_date, end_date)
 except ValueError:
     print("❌ Dates must be in YYYY-MM-DD format")
     sys.exit(1)
