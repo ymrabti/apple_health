@@ -1,7 +1,7 @@
 *.csv
 *.xml
 *xlsx
-
+Lib/
 # Dependencies
 node_modules
 static
