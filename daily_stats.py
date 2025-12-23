@@ -15,6 +15,8 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.parse as urlparse
 import threading
 import webbrowser
+import signal
+import time as systime
 from openpyxl import Workbook
 import keyring
 
@@ -30,7 +32,10 @@ root = tree.getroot()
 
 # Global synchronization primitives for OAuth
 AUTH_SUCCESS = threading.Event()
-server_instance = None  # type: HTTPServer | None
+SERVER_READY = threading.Event()
+SERVER_INSTANCE = None  # type: HTTPServer | None
+LISTEN_PORT = None  # type: int | None
+CANCEL_EVENT = threading.Event()
 
 
 def get_stored_token():
@@ -66,11 +71,20 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Authentication failed.")
 
 
-def start_local_server():
-    """Start a local HTTP server to handle OAuth callback (until shutdown)."""
-    global server_instance
-    httpd = HTTPServer(("127.0.0.1", 8765), CallbackHandler)
-    server_instance = httpd
+def start_local_server(preferred_port: int = 8765):
+    """Start a local HTTP server to handle OAuth callback (until shutdown).
+    Tries preferred_port first, falls back to any free port.
+    Signals readiness via SERVER_READY and records LISTEN_PORT.
+    """
+    global SERVER_INSTANCE, LISTEN_PORT
+    try:
+        httpd = HTTPServer(("127.0.0.1", preferred_port), CallbackHandler)
+    except OSError:
+        # Fallback to any available port
+        httpd = HTTPServer(("127.0.0.1", 0), CallbackHandler)
+    SERVER_INSTANCE = httpd
+    LISTEN_PORT = httpd.server_address[1]
+    SERVER_READY.set()
     # Serve until `shutdown()` is called from the main thread.
     httpd.serve_forever(poll_interval=0.5)
 
@@ -81,28 +95,56 @@ def ensure_authenticated():
     if token_back:
         return token_back
 
-    # launch local server in background
-    server_thread = threading.Thread(target=start_local_server, daemon=True)
+    # launch local server in background (prefer 8765)
+    server_thread = threading.Thread(
+        target=start_local_server, kwargs={"preferred_port": 8765}, daemon=True
+    )
     server_thread.start()
 
-    # open browser to authenticate
-    auth_url = f"{SERVER_URL}/authenticate?redirect=http://127.0.0.1:8765/callback"
+    # wait for server readiness to know the actual port
+    if not SERVER_READY.wait(timeout=5):
+        # could not start server; cancel
+        if SERVER_INSTANCE is not None:
+            try:
+                SERVER_INSTANCE.shutdown()
+            except OSError:
+                pass
+        server_thread.join(timeout=2)
+        print("❌ Failed to start local callback server.")
+        return None
+
+    # open browser to authenticate with the actual chosen port
+    redirect_url = f"http://127.0.0.1:{LISTEN_PORT}/callback"
+    auth_url = f"{SERVER_URL}?provider={redirect_url}"
     webbrowser.open(auth_url)
 
-    # wait up to 5 minutes for authentication to complete
-    # TODO: handle KeyboardInterrupt to cancel waiting
-    success = AUTH_SUCCESS.wait(timeout=60)
-
-    # stop the local server regardless of outcome
-    if server_instance is not None:
-        try:
-            server_instance.shutdown()
-        except Exception:
-            pass
-    server_thread.join(timeout=2)
+    # wait up to 5 minutes for authentication to complete; allow Ctrl+C to cancel
+    deadline = systime.monotonic() + 300
+    success = False
+    try:
+        while True:
+            if AUTH_SUCCESS.is_set():
+                success = True
+                break
+            if CANCEL_EVENT.is_set():
+                raise KeyboardInterrupt
+            remaining = deadline - systime.monotonic()
+            if remaining <= 0:
+                success = False
+                break
+            # poll in small intervals to allow signal handling
+            AUTH_SUCCESS.wait(timeout=min(0.25, remaining))
+    finally:
+        # stop the local server regardless of outcome
+        if SERVER_INSTANCE is not None:
+            try:
+                SERVER_INSTANCE.shutdown()
+            except Exception:
+                pass
+        server_thread.join(timeout=2)
 
     if not success:
-        # Timed out: cancel process
+        # Timed out or interrupted: cancel process
         return None
 
     return get_stored_token()
@@ -153,11 +195,10 @@ def export_excel(_start, _end):
     for record in root.findall(".//ActivitySummary"):
         print(record.attrib)
     for record in root.findall(".//Record"):
-        """Process each record in the Apple Health XML export. Aggregate data into daily and weekly totals."""
         dtype = record.attrib.get("type")
-        start_date = record.attrib.get("startDate")
 
         try:
+            start_date = record.attrib.get("startDate")
             dt = datetime.fromisoformat(start_date.replace(" +", "+"))
         except ValueError:
             continue
@@ -320,7 +361,18 @@ if len(sys.argv) != 3:
     print("Example: python daily_stats.py 2025-08-01 2025-08-31")
     sys.exit(1)
 
+
+def _sigint_handler(_signum, _frame):
+    CANCEL_EVENT.set()
+
+
 try:
+    # install Ctrl+C handler
+    try:
+        signal.signal(signal.SIGINT, _sigint_handler)
+    except Exception:
+        # In some environments signals may not be configurable; ignore
+        pass
     start_date = datetime.combine(
         datetime.strptime(sys.argv[1], "%Y-%m-%d").date(), time.min, tzinfo=timezone.utc
     )
@@ -329,6 +381,9 @@ try:
     )
 
     token = ensure_authenticated()
+    if CANCEL_EVENT.is_set():
+        print("\nOperation cancelled by user.")
+        sys.exit(1)
     if not token:
         print("⚠️ Authentication timed out (5 minutes). Process cancelled.")
         sys.exit(1)
@@ -336,4 +391,13 @@ try:
     export_excel(start_date, end_date)
 except ValueError:
     print("❌ Dates must be in YYYY-MM-DD format")
+    sys.exit(1)
+except KeyboardInterrupt:
+    # Ensure server is shut down if running and exit cleanly
+    if SERVER_INSTANCE is not None:
+        try:
+            SERVER_INSTANCE.shutdown()
+        except Exception:
+            pass
+    print("\nOperation cancelled by user.")
     sys.exit(1)
