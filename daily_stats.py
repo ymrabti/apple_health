@@ -13,6 +13,8 @@ import xml.etree.ElementTree as ET
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
 import urllib.parse as urlparse
+import urllib.request as urlrequest
+import urllib.error as urlerror
 import threading
 import webbrowser
 import signal
@@ -45,6 +47,10 @@ def get_stored_token():
 def store_token(token_back: str):
     """Store JWT token securely in keyring."""
     keyring.set_password(APP_NAME, CRED_KEY, token_back)
+
+def clear_stored_token():
+    """Clear stored JWT token from keyring."""
+    keyring.delete_password(APP_NAME, CRED_KEY)
 
 
 class CallbackHandler(BaseHTTPRequestHandler):
@@ -122,7 +128,7 @@ def ensure_authenticated():
         print("Browser did not open automatically. Please copy/paste the URL above.", flush=True)
 
     # wait up to 5 minutes for authentication to complete; allow Ctrl+C to cancel
-    deadline = systime.monotonic() + 300
+    deadline = systime.monotonic() + 30
     success = False
     try:
         while True:
@@ -151,6 +157,20 @@ def ensure_authenticated():
         return None
 
     return get_stored_token()
+
+
+def validate_token(token: str, endpoint: str = "http://localhost:3000/api/health") -> bool:
+    """Validate the JWT by calling the health API endpoint.
+    Returns True if the endpoint responds with HTTP 200, False otherwise.
+    """
+    try:
+        url = f"{endpoint}?token={urlparse.quote(token)}"
+        req = urlrequest.Request(url, headers={"Accept": "application/json"})
+        with urlrequest.urlopen(req, timeout=5) as resp:
+            return resp.status == 200
+    except (urlerror.URLError, urlerror.HTTPError) as e:
+        print(f"❌ Token validation failed: {e}")
+        return False
 
 
 def parse_apple_health(start_dt, end_dt):
@@ -389,6 +409,15 @@ try:
         sys.exit(1)
     if not token:
         print("⚠️ Authentication timed out (5 minutes). Process cancelled.")
+        sys.exit(1)
+    # Validate token with local API before proceeding
+    if not validate_token(token):
+        # Treat invalid token same as no token: clear and cancel
+        try:
+            clear_stored_token()
+        except Exception:
+            pass
+        print("Process cancelled.")
         sys.exit(1)
     summaries = parse_apple_health(start_date, end_date)
     export_excel(start_date, end_date)
