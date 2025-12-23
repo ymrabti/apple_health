@@ -130,10 +130,10 @@ def export_excel(_start, _end):
 
     for record in root.findall(".//Record"):
         dtype = record.attrib.get("type")
-        startDate = record.attrib.get("startDate")
+        start_date = record.attrib.get("startDate")
 
         try:
-            dt = datetime.fromisoformat(startDate.replace(" +", "+"))
+            dt = datetime.fromisoformat(start_date.replace(" +", "+"))
         except ValueError:
             continue
 
