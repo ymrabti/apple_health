@@ -51,7 +51,7 @@ def store_token(token_back: str):
 class CallbackHandler(BaseHTTPRequestHandler):
     """HTTP handler to process OAuth callback and extract JWT token."""
 
-    def do_GET(self):
+    def do_get(self):
         """Handle GET request to extract JWT token from query parameters."""
         # extract JWT from query string: ?token=...
 
@@ -116,7 +116,12 @@ def ensure_authenticated():
     # open browser to authenticate with the actual chosen port
     redirect_url = f"http://127.0.0.1:{LISTEN_PORT}/callback"
     auth_url = f"{SERVER_URL}?provider={redirect_url}"
-    webbrowser.open(auth_url)
+    # Log the URL so the user can copy/paste it if needed
+    print("\nTo authenticate, open this URL in your browser (link valid for 5 minutes):", flush=True)
+    print(auth_url, "\n", flush=True)
+    opened = webbrowser.open(auth_url)
+    if not opened:
+        print("Browser did not open automatically. Please copy/paste the URL above.", flush=True)
 
     # wait up to 5 minutes for authentication to complete; allow Ctrl+C to cancel
     deadline = systime.monotonic() + 300
