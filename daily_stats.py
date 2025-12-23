@@ -19,7 +19,7 @@ from openpyxl import Workbook
 import keyring
 
 APP_NAME = "health_dashboard"
-SERVER_URL = "http://localhost:7384/api/Auth/OAuth/callback"
+SERVER_URL = "http://localhost:3762/oauth/callback"
 CRED_KEY = "jwt_token"
 
 # ---- CONFIG ----
@@ -27,6 +27,10 @@ FILE = "export.xml"
 # ----------------
 tree = ET.parse(FILE)
 root = tree.getroot()
+
+# Global synchronization primitives for OAuth
+AUTH_SUCCESS = threading.Event()
+server_instance = None  # type: HTTPServer | None
 
 
 def get_stored_token():
@@ -51,6 +55,8 @@ class CallbackHandler(BaseHTTPRequestHandler):
         token_oauth = params.get("token", [None])[0]
         if token_oauth:
             store_token(token_oauth)
+            # Signal success to the main process
+            AUTH_SUCCESS.set()
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"Authentication successful. You can close this window.")
@@ -61,9 +67,12 @@ class CallbackHandler(BaseHTTPRequestHandler):
 
 
 def start_local_server():
-    """Start a local HTTP server to handle OAuth callback."""
+    """Start a local HTTP server to handle OAuth callback (until shutdown)."""
+    global server_instance
     httpd = HTTPServer(("127.0.0.1", 8765), CallbackHandler)
-    httpd.handle_request()  # single request then exit
+    server_instance = httpd
+    # Serve until `shutdown()` is called from the main thread.
+    httpd.serve_forever(poll_interval=0.5)
 
 
 def ensure_authenticated():
@@ -73,15 +82,28 @@ def ensure_authenticated():
         return token_back
 
     # launch local server in background
-    thread = threading.Thread(target=start_local_server, daemon=True)
-    thread.start()
+    server_thread = threading.Thread(target=start_local_server, daemon=True)
+    server_thread.start()
 
     # open browser to authenticate
     auth_url = f"{SERVER_URL}/authenticate?redirect=http://127.0.0.1:8765/callback"
     webbrowser.open(auth_url)
 
-    # wait until local server saves token
-    thread.join()
+    # wait up to 5 minutes for authentication to complete
+    # TODO: handle KeyboardInterrupt to cancel waiting
+    success = AUTH_SUCCESS.wait(timeout=60)
+
+    # stop the local server regardless of outcome
+    if server_instance is not None:
+        try:
+            server_instance.shutdown()
+        except Exception:
+            pass
+    server_thread.join(timeout=2)
+
+    if not success:
+        # Timed out: cancel process
+        return None
 
     return get_stored_token()
 
@@ -307,6 +329,9 @@ try:
     )
 
     token = ensure_authenticated()
+    if not token:
+        print("⚠️ Authentication timed out (5 minutes). Process cancelled.")
+        sys.exit(1)
     summaries = parse_apple_health(start_date, end_date)
     export_excel(start_date, end_date)
 except ValueError:

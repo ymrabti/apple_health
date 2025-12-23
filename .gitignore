@@ -8,7 +8,7 @@ static
 aws
 # yarn error logs
 yarn-error.log
-
+venv/
 # Environment variables
 config
 !.env*.example
