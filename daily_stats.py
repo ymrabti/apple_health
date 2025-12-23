@@ -19,7 +19,7 @@ from openpyxl import Workbook
 import keyring
 
 APP_NAME = "health_dashboard"
-SERVER_URL = "https://portfolio_client.youmrabti.com"
+SERVER_URL = "http://localhost:7384/api/Auth/OAuth/callback"
 CRED_KEY = "jwt_token"
 
 # ---- CONFIG ----
@@ -128,7 +128,10 @@ def export_excel(_start, _end):
         lambda: {"steps": 0, "distance": 0, "calories": 0, "flights": 0, "exercise": 0}
     )
 
+    for record in root.findall(".//ActivitySummary"):
+        print(record.attrib)
     for record in root.findall(".//Record"):
+        """Process each record in the Apple Health XML export. Aggregate data into daily and weekly totals."""
         dtype = record.attrib.get("type")
         start_date = record.attrib.get("startDate")
 
@@ -303,7 +306,7 @@ try:
         datetime.strptime(sys.argv[2], "%Y-%m-%d").date(), time.max, tzinfo=timezone.utc
     )
 
-    # token = ensure_authenticated()
+    token = ensure_authenticated()
     summaries = parse_apple_health(start_date, end_date)
     export_excel(start_date, end_date)
 except ValueError:
