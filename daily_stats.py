@@ -51,7 +51,7 @@ def store_token(token_back: str):
 class CallbackHandler(BaseHTTPRequestHandler):
     """HTTP handler to process OAuth callback and extract JWT token."""
 
-    def do_get(self):
+    def do_GET(self):
         """Handle GET request to extract JWT token from query parameters."""
         # extract JWT from query string: ?token=...
 
@@ -85,6 +85,7 @@ def start_local_server(preferred_port: int = 8765):
     SERVER_INSTANCE = httpd
     LISTEN_PORT = httpd.server_address[1]
     SERVER_READY.set()
+    print(f"Local callback server listening on http://127.0.0.1:{LISTEN_PORT}")
     # Serve until `shutdown()` is called from the main thread.
     httpd.serve_forever(poll_interval=0.5)
 
@@ -197,8 +198,8 @@ def export_excel(_start, _end):
         lambda: {"steps": 0, "distance": 0, "calories": 0, "flights": 0, "exercise": 0}
     )
 
-    for record in root.findall(".//ActivitySummary"):
-        print(record.attrib)
+    # for record in root.findall(".//ActivitySummary"):
+    #     print(record.attrib)
     for record in root.findall(".//Record"):
         dtype = record.attrib.get("type")
 
