@@ -33,8 +33,7 @@ root = tree.getroot()
 # Global synchronization primitives for OAuth
 AUTH_SUCCESS = threading.Event()
 SERVER_READY = threading.Event()
-SERVER_INSTANCE = None  # type: HTTPServer | None
-LISTEN_PORT = None  # type: int | None
+SERVER_STATE = {"instance": None, "port": None}
 CANCEL_EVENT = threading.Event()
 
 
@@ -76,19 +75,17 @@ def start_local_server(preferred_port: int = 8765):
     Tries preferred_port first, falls back to any free port.
     Signals readiness via SERVER_READY and records LISTEN_PORT.
     """
-    global SERVER_INSTANCE, LISTEN_PORT
     try:
         httpd = HTTPServer(("127.0.0.1", preferred_port), CallbackHandler)
     except OSError:
         # Fallback to any available port
         httpd = HTTPServer(("127.0.0.1", 0), CallbackHandler)
-    SERVER_INSTANCE = httpd
-    LISTEN_PORT = httpd.server_address[1]
+    SERVER_STATE["instance"] = httpd
+    SERVER_STATE["port"] = httpd.server_address[1]
     SERVER_READY.set()
-    print(f"Local callback server listening on http://127.0.0.1:{LISTEN_PORT}")
+    print(f"Local callback server listening on http://127.0.0.1:{SERVER_STATE['port']}")
     # Serve until `shutdown()` is called from the main thread.
     httpd.serve_forever(poll_interval=0.5)
-
 
 def ensure_authenticated():
     """Ensure the user is authenticated and return the JWT token."""
@@ -105,9 +102,9 @@ def ensure_authenticated():
     # wait for server readiness to know the actual port
     if not SERVER_READY.wait(timeout=5):
         # could not start server; cancel
-        if SERVER_INSTANCE is not None:
+        if SERVER_STATE["instance"] is not None:
             try:
-                SERVER_INSTANCE.shutdown()
+                SERVER_STATE["instance"].shutdown()
             except OSError:
                 pass
         server_thread.join(timeout=2)
@@ -115,7 +112,7 @@ def ensure_authenticated():
         return None
 
     # open browser to authenticate with the actual chosen port
-    redirect_url = f"http://127.0.0.1:{LISTEN_PORT}/callback"
+    redirect_url = f"http://127.0.0.1:{SERVER_STATE['port']}/callback"
     auth_url = f"{SERVER_URL}?provider={redirect_url}"
     # Log the URL so the user can copy/paste it if needed
     print("\nTo authenticate, open this URL in your browser (link valid for 5 minutes):", flush=True)
@@ -142,9 +139,9 @@ def ensure_authenticated():
             AUTH_SUCCESS.wait(timeout=min(0.25, remaining))
     finally:
         # stop the local server regardless of outcome
-        if SERVER_INSTANCE is not None:
+        if SERVER_STATE["instance"] is not None:
             try:
-                SERVER_INSTANCE.shutdown()
+                SERVER_STATE["instance"].shutdown()
             except Exception:
                 pass
         server_thread.join(timeout=2)
@@ -400,9 +397,9 @@ except ValueError:
     sys.exit(1)
 except KeyboardInterrupt:
     # Ensure server is shut down if running and exit cleanly
-    if SERVER_INSTANCE is not None:
+    if SERVER_STATE["instance"] is not None:
         try:
-            SERVER_INSTANCE.shutdown()
+            SERVER_STATE["instance"].shutdown()
         except Exception:
             pass
     print("\nOperation cancelled by user.")
