@@ -221,6 +221,7 @@ def format_number(value, width=10):
     formatted = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return formatted.rjust(width, " ")
 
+
 def finall_and_delete(output_path=None, make_backup=False):
     """Remove all Record elements from the XML tree and save to file.
 
@@ -239,10 +240,10 @@ def finall_and_delete(output_path=None, make_backup=False):
             output_path = FILE + "_cleaned"
 
     # Remove all Record nodes
-    records = list(root.findall('.//Record'))
+    records = list(root.findall(".//Record"))
     for record in records:
         root.remove(record)
-    records = list(root.findall('.//ActivitySummary'))
+    records = list(root.findall(".//ActivitySummary"))
     for record in records:
         root.remove(record)
 
@@ -259,12 +260,13 @@ def finall_and_delete(output_path=None, make_backup=False):
             ET.indent(tree, space="  ")  # Python 3.9+
         except AttributeError:
             pass
-        tree.write(output_path, encoding='utf-8', xml_declaration=True)
+        tree.write(output_path, encoding="utf-8", xml_declaration=True)
         print(f"✅ Saved cleaned XML to '{output_path}'")
         return output_path
     except OSError as e:
         print(f"❌ Failed to write cleaned XML: {e}")
         return output_path
+
 
 def export_excel(_start, _end):
     """Export daily and weekly aggregated data to an Excel file."""
@@ -284,6 +286,47 @@ def export_excel(_start, _end):
     print(root.find(".//Me").attrib)
     # for record in root.findall(".//ActivitySummary"):
     #     print(record.attrib)
+    # # Record types of interest:
+    # HKQuantityTypeIdentifierStepCount
+    # HKQuantityTypeIdentifierDistanceWalkingRunning
+    # HKQuantityTypeIdentifierActiveEnergyBurned
+    # HKQuantityTypeIdentifierFlightsClimbed
+    # HKQuantityTypeIdentifierHeadphoneAudioExposure
+    # HKQuantityTypeIdentifierWalkingDoubleSupportPercentage
+    # HKQuantityTypeIdentifierBasalEnergyBurned
+    # HKQuantityTypeIdentifierWalkingSpeed
+    # HKQuantityTypeIdentifierWalkingStepLength
+    # HKQuantityTypeIdentifierWalkingAsymmetryPercentage
+    # HKQuantityTypeIdentifierAppleWalkingSteadiness
+    # HKCategoryTypeIdentifierSleepAnalysis
+    # HKCategoryTypeIdentifierHeadphoneAudioExposureEvent
+    # HKQuantityTypeIdentifierHeight
+    # HKQuantityTypeIdentifierBodyMass
+    # HKQuantityTypeIdentifierBodyMass
+    # HKDataTypeSleepDurationGoal
+    # # Me
+    # # ActivitySummary
+    # # ExportDate
+
+    record_dtypes = [
+        "HKQuantityTypeIdentifierStepCount",
+        "HKQuantityTypeIdentifierDistanceWalkingRunning",
+        "HKQuantityTypeIdentifierActiveEnergyBurned",
+        "HKQuantityTypeIdentifierFlightsClimbed",
+        "HKQuantityTypeIdentifierHeadphoneAudioExposure",
+        "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage",
+        "HKQuantityTypeIdentifierBasalEnergyBurned",
+        "HKQuantityTypeIdentifierWalkingSpeed",
+        "HKQuantityTypeIdentifierWalkingStepLength",
+        "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",
+        "HKQuantityTypeIdentifierAppleWalkingSteadiness",
+        "HKCategoryTypeIdentifierSleepAnalysis",
+        "HKCategoryTypeIdentifierHeadphoneAudioExposureEvent",
+        "HKQuantityTypeIdentifierHeight",
+        "HKQuantityTypeIdentifierBodyMass",
+        "HKQuantityTypeIdentifierBodyMass",
+        "HKDataTypeSleepDurationGoal",
+    ]
     for record in root.findall(".//Record"):
         dtype = record.attrib.get("type")
 
@@ -299,30 +342,6 @@ def export_excel(_start, _end):
                 value = float(value_str)
             except ValueError:
                 continue
-
-            # # Record types of interest:
-            # HKQuantityTypeIdentifierStepCount
-            # HKQuantityTypeIdentifierDistanceWalkingRunning
-            # HKQuantityTypeIdentifierActiveEnergyBurned
-            # HKQuantityTypeIdentifierFlightsClimbed
-            # HKQuantityTypeIdentifierHeadphoneAudioExposure
-            # HKQuantityTypeIdentifierWalkingDoubleSupportPercentage
-            # HKQuantityTypeIdentifierBasalEnergyBurned
-            # HKQuantityTypeIdentifierWalkingSpeed
-            # HKQuantityTypeIdentifierWalkingStepLength
-            # HKQuantityTypeIdentifierWalkingAsymmetryPercentage
-            # HKQuantityTypeIdentifierAppleWalkingSteadiness
-            # HKCategoryTypeIdentifierSleepAnalysis
-            # HKCategoryTypeIdentifierHeadphoneAudioExposureEvent
-            # HKQuantityTypeIdentifierHeight
-            # HKQuantityTypeIdentifierBodyMass
-            # HKQuantityTypeIdentifierBodyMass
-            # HKDataTypeSleepDurationGoal
-            # # Me
-            # # ActivitySummary
-            # # ExportDate
-            
-            record_keys = record.attrib.keys()
 
             day_key = dt.date()
             if dtype == "HKQuantityTypeIdentifierStepCount":
@@ -501,18 +520,27 @@ try:
     if not token:
         print("⚠️ Authentication timed out (5 minutes). Process cancelled.")
         sys.exit(1)
-    # Validate token with local API before proceeding
+    # Validate token with local API before proceeding; if invalid, start OAuth
     if not validate_token(token):
-        # Treat invalid token same as no token: clear and cancel
+        print("⚠️ Stored token invalid. Starting OAuth re-authentication…")
         try:
-            print(token)
-            # TODO clear_stored_token()
+            print("Clearing stored token.")
+            clear_stored_token()
         except KeyringError:
             pass
-        print("Process cancelled.")
-        sys.exit(1)
-    # TODO summaries = parse_apple_health(start_date, end_date)
-    # export_excel(start_date, end_date)
+        token = ensure_authenticated()
+        if CANCEL_EVENT.is_set():
+            print("\nOperation cancelled by user.")
+            sys.exit(1)
+        if not token:
+            print("⚠️ Authentication timed out (5 minutes). Process cancelled.")
+            sys.exit(1)
+        if not validate_token(token):
+            print("❌ Authentication failed: token invalid after re-authentication.")
+            sys.exit(1)
+    summaries = parse_apple_health(start_date, end_date)
+    print(summaries[0])
+    export_excel(start_date, end_date)
 except ValueError:
     print("❌ Dates must be in YYYY-MM-DD format")
     sys.exit(1)
