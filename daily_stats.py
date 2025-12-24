@@ -272,50 +272,36 @@ def export_excel(_start, _end):
     """Export daily and weekly aggregated data to an Excel file."""
     # ---- Aggregate daily data ----
     # ---- Aggregate daily data ----
-    daily_data = defaultdict(
-        lambda: {"steps": 0, "distance": 0, "calories": 0, "flights": 0, "exercise": 0}
-    )
+    initial_state = {
+        "steps": 0,
+        "distance": 0,
+        "calories": 0,
+        "basal_calories": 0,
+        "flights": 0,
+        "exercise": 0,
+    }
+
+    daily_data = defaultdict(lambda: initial_state)
 
     # ---- Aggregate weekly data ----
-    weekly_data = defaultdict(
-        lambda: {"steps": 0, "distance": 0, "calories": 0, "flights": 0, "exercise": 0}
-    )
+    weekly_data = defaultdict(lambda: initial_state)
 
-    print(len(root.findall(".//ActivitySummary")))
-    print(len(root.findall(".//Record")))
-    print(root.find(".//Me").attrib)
+    print(root.findall(".//ActivitySummary")[0].attrib)
+    # user_infos = root.find(".//Me").attrib
+    export_date = root.find(".//ExportDate").attrib
+    print(export_date)
     # for record in root.findall(".//ActivitySummary"):
     #     print(record.attrib)
-    # # Record types of interest:
-    # HKQuantityTypeIdentifierStepCount
-    # HKQuantityTypeIdentifierDistanceWalkingRunning
-    # HKQuantityTypeIdentifierActiveEnergyBurned
-    # HKQuantityTypeIdentifierFlightsClimbed
-    # HKQuantityTypeIdentifierHeadphoneAudioExposure
-    # HKQuantityTypeIdentifierWalkingDoubleSupportPercentage
-    # HKQuantityTypeIdentifierBasalEnergyBurned
-    # HKQuantityTypeIdentifierWalkingSpeed
-    # HKQuantityTypeIdentifierWalkingStepLength
-    # HKQuantityTypeIdentifierWalkingAsymmetryPercentage
-    # HKQuantityTypeIdentifierAppleWalkingSteadiness
-    # HKCategoryTypeIdentifierSleepAnalysis
-    # HKCategoryTypeIdentifierHeadphoneAudioExposureEvent
-    # HKQuantityTypeIdentifierHeight
-    # HKQuantityTypeIdentifierBodyMass
-    # HKQuantityTypeIdentifierBodyMass
-    # HKDataTypeSleepDurationGoal
-    # # Me
-    # # ActivitySummary
-    # # ExportDate
 
     record_dtypes = [
         "HKQuantityTypeIdentifierStepCount",
         "HKQuantityTypeIdentifierDistanceWalkingRunning",
         "HKQuantityTypeIdentifierActiveEnergyBurned",
+        "HKQuantityTypeIdentifierBasalEnergyBurned",
         "HKQuantityTypeIdentifierFlightsClimbed",
+        "HKQuantityTypeIdentifierAppleExerciseTime",
         "HKQuantityTypeIdentifierHeadphoneAudioExposure",
         "HKQuantityTypeIdentifierWalkingDoubleSupportPercentage",
-        "HKQuantityTypeIdentifierBasalEnergyBurned",
         "HKQuantityTypeIdentifierWalkingSpeed",
         "HKQuantityTypeIdentifierWalkingStepLength",
         "HKQuantityTypeIdentifierWalkingAsymmetryPercentage",
@@ -324,9 +310,52 @@ def export_excel(_start, _end):
         "HKCategoryTypeIdentifierHeadphoneAudioExposureEvent",
         "HKQuantityTypeIdentifierHeight",
         "HKQuantityTypeIdentifierBodyMass",
-        "HKQuantityTypeIdentifierBodyMass",
         "HKDataTypeSleepDurationGoal",
     ]
+
+    # Map HealthKit record types to our daily_data keys
+    aggregate_map = {
+        "HKQuantityTypeIdentifierStepCount": "steps",
+        "HKQuantityTypeIdentifierDistanceWalkingRunning": "distance",
+        "HKQuantityTypeIdentifierActiveEnergyBurned": "calories",
+        "HKQuantityTypeIdentifierBasalEnergyBurned": "basal_calories",
+        "HKQuantityTypeIdentifierFlightsClimbed": "flights",
+        "HKQuantityTypeIdentifierAppleExerciseTime": "exercise",
+    }
+    # Dynamic keys and preferred order
+    metric_keys = list(dict.fromkeys(aggregate_map.values()))
+    preferred_order = [
+        "steps",
+        "distance",
+        "calories",
+        "basal_calories",
+        "flights",
+        "exercise",
+    ]
+    ordered_keys = [k for k in preferred_order if k in metric_keys] + [
+        k for k in metric_keys if k not in preferred_order
+    ]
+
+    # Reinitialize containers dynamically (overrides earlier static init)
+    daily_data = defaultdict(lambda: {k: 0 for k in metric_keys})
+    weekly_data = defaultdict(lambda: {k: 0 for k in metric_keys})
+
+    def metric_label(key: str) -> str:
+        mapping = {
+            "steps": "Steps",
+            "distance": "Distance (km)",
+            "calories": "Active Calories (kcal)",
+            "basal_calories": "Basal Calories (kcal)",
+            "flights": "Flights",
+            "exercise": "Exercise (minutes)",
+        }
+        return mapping.get(key, key.replace("_", " ").title())
+
+    def format_cell(key: str, value: float):
+        if key == "distance":
+            return format_number(round(value, 2))
+        return int(round(value))
+
     for record in root.findall(".//Record"):
         dtype = record.attrib.get("type")
 
@@ -344,25 +373,16 @@ def export_excel(_start, _end):
                 continue
 
             day_key = dt.date()
-            if dtype == "HKQuantityTypeIdentifierStepCount":
-                daily_data[day_key]["steps"] += value
-            elif dtype == "HKQuantityTypeIdentifierDistanceWalkingRunning":
-                daily_data[day_key]["distance"] += value
-            elif dtype == "HKQuantityTypeIdentifierActiveEnergyBurned":
-                daily_data[day_key]["calories"] += value
-            elif dtype == "HKQuantityTypeIdentifierFlightsClimbed":
-                daily_data[day_key]["flights"] += value
-            elif dtype == "HKQuantityTypeIdentifierAppleExerciseTime":
-                daily_data[day_key]["exercise"] += value
+            # Dynamic aggregation based on allowed dtypes
+            if dtype in record_dtypes and dtype in aggregate_map:
+                key = aggregate_map[dtype]
+                daily_data[day_key][key] += value
 
     for day, data in daily_data.items():
         year, week, _ = day.isocalendar()
         week_key = f"{year}-W{week:02d}"
-        weekly_data[week_key]["steps"] += data["steps"]
-        weekly_data[week_key]["distance"] += data["distance"]
-        weekly_data[week_key]["calories"] += data["calories"]
-        weekly_data[week_key]["flights"] += data["flights"]
-        weekly_data[week_key]["exercise"] += data["exercise"]
+        for k in metric_keys:
+            weekly_data[week_key][k] += data[k]
 
     # ---- Create Excel file ----
     wb = Workbook()
@@ -370,53 +390,19 @@ def export_excel(_start, _end):
     # --- Daily Sheet ---
     daily_sheet = wb.active
     daily_sheet.title = "Daily Totals"
-    daily_sheet.append(
-        [
-            "Date",
-            "Steps",
-            "Distance (km)",
-            "Active Calories (kcal)",
-            "Flights",
-            "Exercise(minutes)",
-        ]
-    )
+    daily_sheet.append(["Date"] + [metric_label(k) for k in ordered_keys])
     for day in sorted(daily_data.keys()):
         data = daily_data[day]
-        daily_sheet.append(
-            [
-                day.isoformat(),
-                int(data["steps"]),
-                format_number(round(data["distance"], 2)),
-                int(data["calories"]),
-                int(data["flights"]),
-                int(data["exercise"]),
-            ]
-        )
+        row = [day.isoformat()] + [format_cell(k, data[k]) for k in ordered_keys]
+        daily_sheet.append(row)
 
     # --- Weekly Sheet ---
     weekly_sheet = wb.create_sheet(title="Weekly Totals")
-    weekly_sheet.append(
-        [
-            "Week",
-            "Steps",
-            "Distance (km)",
-            "Active Calories (kcal)",
-            "Flights",
-            "Exercise(minutes)",
-        ]
-    )
+    weekly_sheet.append(["Week"] + [metric_label(k) for k in ordered_keys])
     for week in sorted(weekly_data.keys()):
         data = weekly_data[week]
-        weekly_sheet.append(
-            [
-                week,
-                int(data["steps"]),
-                format_number(round(data["distance"], 2)),
-                int(data["calories"]),
-                int(data["flights"]),
-                int(data["exercise"]),
-            ]
-        )
+        row = [week] + [format_cell(k, data[k]) for k in ordered_keys]
+        weekly_sheet.append(row)
 
     # --- Daily Statistics Sheet ---
     stats_sheet = wb.create_sheet(title="Daily Stats Summary")
@@ -433,15 +419,9 @@ def export_excel(_start, _end):
         ]
     )
 
-    # Prepare lists and corresponding dates
-    steps_list = [data["steps"] for data in daily_data.values()]
-    steps_dates = list(daily_data.keys())
-    distance_list = [data["distance"] for data in daily_data.values()]
-    distance_dates = list(daily_data.keys())
-    calories_list = [data["calories"] for data in daily_data.values()]
-    flights_list = [data["flights"] for data in daily_data.values()]
-    exercise_list = [data["exercise"] for data in daily_data.values()]
-    calories_dates = list(daily_data.keys())
+    # Prepare lists and corresponding dates dynamically
+    all_dates = list(daily_data.keys())
+    series_by_key = {k: [data[k] for data in daily_data.values()] for k in ordered_keys}
 
     def get_day_of_value(lst, dates, value):
         """Return the first date corresponding to the value"""
@@ -450,13 +430,7 @@ def export_excel(_start, _end):
                 return d.isoformat()
         return ""
 
-    metrics = [
-        ("Steps", steps_list, steps_dates),
-        ("Distance (km)", distance_list, distance_dates),
-        ("Active Calories (kcal)", calories_list, calories_dates),
-        ("Flights", flights_list, calories_dates),
-        ("Exercise(in minutes)", exercise_list, calories_dates),
-    ]
+    metrics = [(metric_label(k), series_by_key[k], all_dates) for k in ordered_keys]
 
     for name, lst, dates in metrics:
         max_val = max(lst)
@@ -539,7 +513,6 @@ try:
             print("❌ Authentication failed: token invalid after re-authentication.")
             sys.exit(1)
     summaries = parse_apple_health(start_date, end_date)
-    print(summaries[0])
     export_excel(start_date, end_date)
 except ValueError:
     print("❌ Dates must be in YYYY-MM-DD format")
