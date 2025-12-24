@@ -21,9 +21,15 @@ import signal
 import time as systime
 from openpyxl import Workbook
 import keyring
+import shutil
+from keyring.errors import KeyringError
 
 APP_NAME = "health_dashboard"
-SERVER_URL = "http://localhost:3762/oauth/callback"
+BACKEND = "http://localhost:7384"
+FRONTEND = "http://localhost:3762"
+# ---- OAuth ----
+SERVER_URL = f"{FRONTEND}/oauth/callback"
+HEALTH_CHECK_ENDPOINT = f"{BACKEND}/api/health"
 CRED_KEY = "jwt_token"
 
 # ---- CONFIG ----
@@ -47,6 +53,7 @@ def get_stored_token():
 def store_token(token_back: str):
     """Store JWT token securely in keyring."""
     keyring.set_password(APP_NAME, CRED_KEY, token_back)
+
 
 def clear_stored_token():
     """Clear stored JWT token from keyring."""
@@ -76,7 +83,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"Authentication failed.")
 
 
-def start_local_server(preferred_port: int = 8765):
+def start_local_server(preferred_port: int = 11011):
     """Start a local HTTP server to handle OAuth callback (until shutdown).
     Tries preferred_port first, falls back to any free port.
     Signals readiness via SERVER_READY and records LISTEN_PORT.
@@ -93,15 +100,16 @@ def start_local_server(preferred_port: int = 8765):
     # Serve until `shutdown()` is called from the main thread.
     httpd.serve_forever(poll_interval=0.5)
 
+
 def ensure_authenticated():
     """Ensure the user is authenticated and return the JWT token."""
     token_back = get_stored_token()
     if token_back:
         return token_back
 
-    # launch local server in background (prefer 8765)
+    # launch local server in background (prefer 11011)
     server_thread = threading.Thread(
-        target=start_local_server, kwargs={"preferred_port": 8765}, daemon=True
+        target=start_local_server, kwargs={"preferred_port": 11011}, daemon=True
     )
     server_thread.start()
 
@@ -121,11 +129,17 @@ def ensure_authenticated():
     redirect_url = f"http://127.0.0.1:{SERVER_STATE['port']}/callback"
     auth_url = f"{SERVER_URL}?provider={redirect_url}"
     # Log the URL so the user can copy/paste it if needed
-    print("\nTo authenticate, open this URL in your browser (link valid for 5 minutes):", flush=True)
+    print(
+        "\nTo authenticate, open this URL in your browser (link valid for 5 minutes):",
+        flush=True,
+    )
     print(auth_url, "\n", flush=True)
     opened = webbrowser.open(auth_url)
     if not opened:
-        print("Browser did not open automatically. Please copy/paste the URL above.", flush=True)
+        print(
+            "Browser did not open automatically. Please copy/paste the URL above.",
+            flush=True,
+        )
 
     # wait up to 5 minutes for authentication to complete; allow Ctrl+C to cancel
     deadline = systime.monotonic() + 30
@@ -148,7 +162,7 @@ def ensure_authenticated():
         if SERVER_STATE["instance"] is not None:
             try:
                 SERVER_STATE["instance"].shutdown()
-            except Exception:
+            except OSError:
                 pass
         server_thread.join(timeout=2)
 
@@ -159,13 +173,19 @@ def ensure_authenticated():
     return get_stored_token()
 
 
-def validate_token(token: str, endpoint: str = "http://localhost:3000/api/health") -> bool:
+def validate_token(jwt_token: str, endpoint: str = HEALTH_CHECK_ENDPOINT) -> bool:
     """Validate the JWT by calling the health API endpoint.
     Returns True if the endpoint responds with HTTP 200, False otherwise.
     """
     try:
-        url = f"{endpoint}?token={urlparse.quote(token)}"
-        req = urlrequest.Request(url, headers={"Accept": "application/json"})
+        url = f"{endpoint}"
+        req = urlrequest.Request(
+            url,
+            headers={
+                "Accept": "application/json",
+                "Authorization": f"Bearer {jwt_token}",
+            },
+        )
         with urlrequest.urlopen(req, timeout=5) as resp:
             return resp.status == 200
     except (urlerror.URLError, urlerror.HTTPError) as e:
@@ -201,6 +221,50 @@ def format_number(value, width=10):
     formatted = f"{value:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return formatted.rjust(width, " ")
 
+def finall_and_delete(output_path=None, make_backup=False):
+    """Remove all Record elements from the XML tree and save to file.
+
+    Args:
+        output_path: Destination XML path. Defaults to sibling '<FILE>_cleaned.xml'.
+        make_backup: If True and writing back to the original FILE, write a '.bak' backup first.
+
+    Returns:
+        The path to the saved XML file.
+    """
+    if output_path is None:
+        if "." in FILE:
+            base, ext = FILE.rsplit(".", 1)
+            output_path = f"{base}_cleaned.{ext}"
+        else:
+            output_path = FILE + "_cleaned"
+
+    # Remove all Record nodes
+    records = list(root.findall('.//Record'))
+    for record in records:
+        root.remove(record)
+    records = list(root.findall('.//ActivitySummary'))
+    for record in records:
+        root.remove(record)
+
+    # Optional backup if overwriting original
+    if make_backup and output_path == FILE:
+        try:
+            shutil.copyfile(FILE, FILE + ".bak")
+        except OSError:
+            pass
+
+    # Pretty-print and write
+    try:
+        try:
+            ET.indent(tree, space="  ")  # Python 3.9+
+        except AttributeError:
+            pass
+        tree.write(output_path, encoding='utf-8', xml_declaration=True)
+        print(f"✅ Saved cleaned XML to '{output_path}'")
+        return output_path
+    except OSError as e:
+        print(f"❌ Failed to write cleaned XML: {e}")
+        return output_path
 
 def export_excel(_start, _end):
     """Export daily and weekly aggregated data to an Excel file."""
@@ -215,14 +279,17 @@ def export_excel(_start, _end):
         lambda: {"steps": 0, "distance": 0, "calories": 0, "flights": 0, "exercise": 0}
     )
 
+    print(len(root.findall(".//ActivitySummary")))
+    print(len(root.findall(".//Record")))
+    print(root.find(".//Me").attrib)
     # for record in root.findall(".//ActivitySummary"):
     #     print(record.attrib)
     for record in root.findall(".//Record"):
         dtype = record.attrib.get("type")
 
         try:
-            start_date = record.attrib.get("startDate")
-            dt = datetime.fromisoformat(start_date.replace(" +", "+"))
+            startdate = record.attrib.get("startDate")
+            dt = datetime.fromisoformat(startdate.replace(" +", "+"))
         except ValueError:
             continue
 
@@ -232,6 +299,30 @@ def export_excel(_start, _end):
                 value = float(value_str)
             except ValueError:
                 continue
+
+            # # Record types of interest:
+            # HKQuantityTypeIdentifierStepCount
+            # HKQuantityTypeIdentifierDistanceWalkingRunning
+            # HKQuantityTypeIdentifierActiveEnergyBurned
+            # HKQuantityTypeIdentifierFlightsClimbed
+            # HKQuantityTypeIdentifierHeadphoneAudioExposure
+            # HKQuantityTypeIdentifierWalkingDoubleSupportPercentage
+            # HKQuantityTypeIdentifierBasalEnergyBurned
+            # HKQuantityTypeIdentifierWalkingSpeed
+            # HKQuantityTypeIdentifierWalkingStepLength
+            # HKQuantityTypeIdentifierWalkingAsymmetryPercentage
+            # HKQuantityTypeIdentifierAppleWalkingSteadiness
+            # HKCategoryTypeIdentifierSleepAnalysis
+            # HKCategoryTypeIdentifierHeadphoneAudioExposureEvent
+            # HKQuantityTypeIdentifierHeight
+            # HKQuantityTypeIdentifierBodyMass
+            # HKQuantityTypeIdentifierBodyMass
+            # HKDataTypeSleepDurationGoal
+            # # Me
+            # # ActivitySummary
+            # # ExportDate
+            
+            record_keys = record.attrib.keys()
 
             day_key = dt.date()
             if dtype == "HKQuantityTypeIdentifierStepCount":
@@ -393,7 +484,7 @@ try:
     # install Ctrl+C handler
     try:
         signal.signal(signal.SIGINT, _sigint_handler)
-    except Exception:
+    except ValueError:
         # In some environments signals may not be configurable; ignore
         pass
     start_date = datetime.combine(
@@ -414,13 +505,14 @@ try:
     if not validate_token(token):
         # Treat invalid token same as no token: clear and cancel
         try:
-            clear_stored_token()
-        except Exception:
+            print(token)
+            # TODO clear_stored_token()
+        except KeyringError:
             pass
         print("Process cancelled.")
         sys.exit(1)
-    summaries = parse_apple_health(start_date, end_date)
-    export_excel(start_date, end_date)
+    # TODO summaries = parse_apple_health(start_date, end_date)
+    # export_excel(start_date, end_date)
 except ValueError:
     print("❌ Dates must be in YYYY-MM-DD format")
     sys.exit(1)
@@ -429,7 +521,7 @@ except KeyboardInterrupt:
     if SERVER_STATE["instance"] is not None:
         try:
             SERVER_STATE["instance"].shutdown()
-        except Exception:
+        except OSError:
             pass
     print("\nOperation cancelled by user.")
     sys.exit(1)
