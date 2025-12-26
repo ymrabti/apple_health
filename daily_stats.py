@@ -21,6 +21,7 @@ import signal
 import time as systime
 import shutil
 import json
+import socket
 from openpyxl import Workbook
 import keyring
 from keyring.errors import KeyringError
@@ -284,7 +285,7 @@ def _post_json(url: str, payload: dict, jwt_token: str) -> bool:
         )
         with urlrequest.urlopen(req, timeout=10) as resp:
             return 200 <= resp.status < 300
-    except Exception as e:
+    except (urlerror.URLError, urlerror.HTTPError, socket.timeout) as e:
         print(f"❌ POST {url} failed: {e}")
         return False
 
@@ -309,7 +310,7 @@ def _derive_export_date_str() -> str | None:
         date_str = val[:10]
         datetime.strptime(date_str, "%Y-%m-%d")
         return date_str
-    except Exception:
+    except (ValueError, TypeError):
         return None
 
 
@@ -442,13 +443,13 @@ def export_excel(_start, _end, jwt_token=None):
             def _int(v):
                 try:
                     return int(round(float(v)))
-                except Exception:
+                except (ValueError, TypeError):
                     return 0
 
             def _dec(v):
                 try:
                     return round(float(v), 4)
-                except Exception:
+                except (ValueError, TypeError):
                     return 0.0
 
             item = {
@@ -480,7 +481,8 @@ def export_excel(_start, _end, jwt_token=None):
                     d = datetime.strptime(dc, "%Y-%m-%d").date()
                     if not (_start.date() <= d <= _end.date()):
                         continue
-            except Exception:
+            except ValueError:
+                # Skip malformed date strings in activity summaries
                 pass
             act_summaries.append(attrs)
         _post_json(
