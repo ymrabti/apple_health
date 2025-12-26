@@ -8,7 +8,7 @@ Apply daily aggregation and export to Excel file with three sheets:
 
 import sys
 import statistics
-from datetime import datetime, timezone, time
+from datetime import datetime
 import xml.etree.ElementTree as ET
 from collections import defaultdict
 from http.server import HTTPServer, BaseHTTPRequestHandler
@@ -295,7 +295,7 @@ def _derive_export_date_str() -> str | None:
         return None
 
 
-def export_excel(_start, _end, jwt_token=None):
+def export_excel(jwt_token=None):
     """Export daily and weekly aggregated data to an Excel file."""
     # ---- Aggregate daily data ----
     # ---- Aggregate daily data ----
@@ -392,18 +392,17 @@ def export_excel(_start, _end, jwt_token=None):
         except ValueError:
             continue
 
-        if _start <= dt <= _end:
-            value_str = record.attrib.get("value", "0")
-            try:
-                value = float(value_str)
-            except ValueError:
-                continue
+        value_str = record.attrib.get("value", "0")
+        try:
+            value = float(value_str)
+        except ValueError:
+            continue
 
-            day_key = dt.date()
-            # Dynamic aggregation based on allowed dtypes
-            if dtype in record_dtypes and dtype in aggregate_map:
-                key = aggregate_map[dtype]
-                daily_data[day_key][key] += value
+        day_key = dt.date()
+        # Dynamic aggregation based on allowed dtypes
+        if dtype in record_dtypes and dtype in aggregate_map:
+            key = aggregate_map[dtype]
+            daily_data[day_key][key] += value
 
     for day, data in daily_data.items():
         year, week, _ = day.isocalendar()
@@ -415,12 +414,15 @@ def export_excel(_start, _end, jwt_token=None):
     if jwt_token:
         # 1) user infos
         user_infos_payload = {"exportDate": export_date_str, "attributes": me_attrs}
-        _post_json(f"{BACKEND}/api/apple-health/user-infos", user_infos_payload, jwt_token)
+        _post_json(
+            f"{BACKEND}/api/apple-health/user-infos", user_infos_payload, jwt_token
+        )
 
         # 2) daily summaries
         # Build per-day summary objects to match DailySummary schema
         summaries_payload = []
         for day, metrics in daily_data.items():
+
             def _int(v):
                 try:
                     return int(round(float(v)))
@@ -456,15 +458,6 @@ def export_excel(_start, _end, jwt_token=None):
         act_summaries = []
         for rec in root.findall(".//ActivitySummary"):
             attrs = dict(rec.attrib)
-            dc = attrs.get("dateComponents")
-            try:
-                if dc:
-                    d = datetime.strptime(dc, "%Y-%m-%d").date()
-                    if not _start.date() <= d <= _end.date():
-                        continue
-            except ValueError:
-                # Skip malformed date strings in activity summaries
-                pass
             act_summaries.append(attrs)
         _post_json(
             f"{BACKEND}/api/apple-health/activity-summaries",
@@ -535,16 +528,18 @@ def export_excel(_start, _end, jwt_token=None):
                 format_number(round(statistics.mean(lst), 2)),
             ]
         )
+    first_export_date = min(daily_data.keys()).isoformat()
+    latest_export_date = max(daily_data.keys()).isoformat()
     stats_sheet.append(
         [
             "Date Range",
             "Start Date",
-            min(daily_data.keys()).isoformat(),
+            first_export_date,
             "End Date",
-            max(daily_data.keys()).isoformat(),
+            latest_export_date,
         ]
     )
-    output_xlsx = f"activity_summaries/{_start.date()}-{_end.date()}.xlsx"
+    output_xlsx = f"activity_summaries/{first_export_date}-{latest_export_date}.xlsx"
     # ---- Save Excel ----
     wb.save(output_xlsx)
     print(f"Daily, weekly, and daily stats summary exported to '{output_xlsx}'")
@@ -568,12 +563,6 @@ try:
     except ValueError:
         # In some environments signals may not be configurable; ignore
         pass
-    start_date = datetime.combine(
-        datetime.strptime(sys.argv[1], "%Y-%m-%d").date(), time.min, tzinfo=timezone.utc
-    )
-    end_date = datetime.combine(
-        datetime.strptime(sys.argv[2], "%Y-%m-%d").date(), time.max, tzinfo=timezone.utc
-    )
 
     token = ensure_authenticated()
     if CANCEL_EVENT.is_set():
@@ -600,7 +589,7 @@ try:
         if not validate_token(token):
             print("❌ Authentication failed: token invalid after re-authentication.")
             sys.exit(1)
-    export_excel(start_date, end_date, token)
+    export_excel(token)
 except ValueError:
     print("❌ Dates must be in YYYY-MM-DD format")
     sys.exit(1)
