@@ -19,9 +19,10 @@ import threading
 import webbrowser
 import signal
 import time as systime
+import shutil
+import json
 from openpyxl import Workbook
 import keyring
-import shutil
 from keyring.errors import KeyringError
 
 APP_NAME = "health_dashboard"
@@ -268,7 +269,51 @@ def finall_and_delete(output_path=None, make_backup=False):
         return output_path
 
 
-def export_excel(_start, _end):
+def _post_json(url: str, payload: dict, jwt_token: str) -> bool:
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urlrequest.Request(
+            url,
+            data=data,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {jwt_token}",
+            },
+            method="POST",
+        )
+        with urlrequest.urlopen(req, timeout=10) as resp:
+            return 200 <= resp.status < 300
+    except Exception as e:
+        print(f"❌ POST {url} failed: {e}")
+        return False
+
+
+def _derive_export_date_str() -> str | None:
+    try:
+        elem = root.find(".//ExportDate")
+        if elem is None:
+            return None
+        val = None
+        if hasattr(elem, "attrib") and isinstance(elem.attrib, dict):
+            val = elem.attrib.get("value") or elem.attrib.get("date")
+        if not val:
+            val = (elem.text or "").strip()
+        if not val:
+            return None
+        # Try YYYY-MM-DD directly or extract from ISO
+        if "T" in val:
+            val = val.split("T")[0]
+        if " " in val:
+            val = val.split(" ")[0]
+        date_str = val[:10]
+        datetime.strptime(date_str, "%Y-%m-%d")
+        return date_str
+    except Exception:
+        return None
+
+
+def export_excel(_start, _end, jwt_token=None):
     """Export daily and weekly aggregated data to an Excel file."""
     # ---- Aggregate daily data ----
     # ---- Aggregate daily data ----
@@ -286,10 +331,10 @@ def export_excel(_start, _end):
     # ---- Aggregate weekly data ----
     weekly_data = defaultdict(lambda: initial_state)
 
-    print(root.findall(".//ActivitySummary")[0].attrib)
-    # user_infos = root.find(".//Me").attrib
-    export_date = root.find(".//ExportDate").attrib
-    print(export_date)
+    # Gather meta
+    me_elem = root.find(".//Me")
+    me_attrs = me_elem.attrib if me_elem is not None else {}
+    export_date_str = _derive_export_date_str()
     # for record in root.findall(".//ActivitySummary"):
     #     print(record.attrib)
 
@@ -383,6 +428,60 @@ def export_excel(_start, _end):
         week_key = f"{year}-W{week:02d}"
         for k in metric_keys:
             weekly_data[week_key][k] += data[k]
+
+    # ---- Post data to backend (optional) ----
+    if jwt_token:
+        # 1) user infos
+        user_infos_payload = {"exportDate": export_date_str, "attributes": me_attrs}
+        _post_json(f"{BACKEND}/api/apple-health/user-infos", user_infos_payload, jwt_token)
+
+        # 2) daily summaries
+        units = {
+            "steps": None,
+            "distance": "km",
+            "calories": "kcal",
+            "basal_calories": "kcal",
+            "flights": None,
+            "exercise": "minutes",
+        }
+        summaries = []
+        for day in sorted(daily_data.keys()):
+            data = daily_data[day]
+            for k in ordered_keys:
+                val = float(data[k])
+                summaries.append(
+                    {
+                        "date": day.isoformat(),
+                        "type": k,
+                        "value": val,
+                        "unit": units.get(k),
+                        "exportDate": export_date_str,
+                    }
+                )
+        _post_json(
+            f"{BACKEND}/api/apple-health/daily-summaries",
+            {"summaries": summaries},
+            jwt_token,
+        )
+
+        # 3) activity summaries (filtered by date range if possible)
+        act_summaries = []
+        for rec in root.findall(".//ActivitySummary"):
+            attrs = dict(rec.attrib)
+            dc = attrs.get("dateComponents")
+            try:
+                if dc:
+                    d = datetime.strptime(dc, "%Y-%m-%d").date()
+                    if not (_start.date() <= d <= _end.date()):
+                        continue
+            except Exception:
+                pass
+            act_summaries.append(attrs)
+        _post_json(
+            f"{BACKEND}/api/apple-health/activity-summaries",
+            {"exportDate": export_date_str, "summaries": act_summaries},
+            jwt_token,
+        )
 
     # ---- Create Excel file ----
     wb = Workbook()
@@ -513,7 +612,7 @@ try:
             print("❌ Authentication failed: token invalid after re-authentication.")
             sys.exit(1)
     summaries = parse_apple_health(start_date, end_date)
-    export_excel(start_date, end_date)
+    export_excel(start_date, end_date, token)
 except ValueError:
     print("❌ Dates must be in YYYY-MM-DD format")
     sys.exit(1)
