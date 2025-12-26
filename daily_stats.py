@@ -436,31 +436,37 @@ def export_excel(_start, _end, jwt_token=None):
         _post_json(f"{BACKEND}/api/apple-health/user-infos", user_infos_payload, jwt_token)
 
         # 2) daily summaries
-        units = {
-            "steps": None,
-            "distance": "km",
-            "calories": "kcal",
-            "basal_calories": "kcal",
-            "flights": None,
-            "exercise": "minutes",
-        }
-        summaries = []
-        for day in sorted(daily_data.keys()):
-            data = daily_data[day]
-            for k in ordered_keys:
-                val = float(data[k])
-                summaries.append(
-                    {
-                        "date": day.isoformat(),
-                        "type": k,
-                        "value": val,
-                        "unit": units.get(k),
-                        "exportDate": export_date_str,
-                    }
-                )
+        # Build per-day summary objects to match DailySummary schema
+        summaries_payload = []
+        for day, metrics in daily_data.items():
+            def _int(v):
+                try:
+                    return int(round(float(v)))
+                except Exception:
+                    return 0
+
+            def _dec(v):
+                try:
+                    return round(float(v), 4)
+                except Exception:
+                    return 0.0
+
+            item = {
+                "date": day.isoformat(),
+                "steps": _int(metrics.get("steps", 0)),
+                "flights": _int(metrics.get("flights", 0)),
+                "distance": _dec(metrics.get("distance", 0)),
+                "active": _dec(metrics.get("calories", 0)),
+                "basal": _dec(metrics.get("basal_calories", 0)),
+                "exercise": _dec(metrics.get("exercise", 0)),
+            }
+            if export_date_str:
+                item["exportDate"] = export_date_str
+            summaries_payload.append(item)
+
         _post_json(
             f"{BACKEND}/api/apple-health/daily-summaries",
-            {"summaries": summaries},
+            {"summaries": summaries_payload},
             jwt_token,
         )
 
