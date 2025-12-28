@@ -7,7 +7,6 @@ Apply daily aggregation and export to Excel file with three sheets:
 """
 
 import sys
-import statistics
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from collections import defaultdict
@@ -22,7 +21,6 @@ import time as systime
 import shutil
 import json
 import socket
-from openpyxl import Workbook
 import keyring
 from keyring.errors import KeyringError
 
@@ -194,6 +192,7 @@ def validate_token(jwt_token: str, endpoint: str = HEALTH_CHECK_ENDPOINT) -> boo
         print(f"❌ Token validation failed: {e}")
         return False
 
+
 def format_number(value, width=10):
     """
     Format a number with:
@@ -269,6 +268,27 @@ def _post_json(url: str, payload: dict, jwt_token: str) -> bool:
     except (urlerror.URLError, urlerror.HTTPError, socket.timeout) as e:
         print(f"❌ POST {url} failed: {e}")
         return False
+
+
+def _post_in_batches(
+    url: str, items: list, jwt_token: str, chunk_size: int = 100, payload_builder=None
+) -> bool:
+    """
+    Post a large list of items to an endpoint in fixed-size chunks.
+    payload_builder: callable that receives a chunk and returns the JSON payload dict.
+    """
+    if not items:
+        return True
+    if payload_builder is None:
+        payload_builder = lambda chunk: {"items": chunk}
+    total = len(items)
+    for start in range(0, total, chunk_size):
+        end = min(start + chunk_size, total)
+        chunk = items[start:end]
+        ok = _post_json(url, payload_builder(chunk), jwt_token)
+        if not ok:
+            return False
+    return True
 
 
 def _derive_export_date_str() -> str | None:
@@ -351,37 +371,10 @@ def export_excel(jwt_token=None):
     }
     # Dynamic keys and preferred order
     metric_keys = list(dict.fromkeys(aggregate_map.values()))
-    preferred_order = [
-        "steps",
-        "distance",
-        "calories",
-        "basal_calories",
-        "flights",
-        "exercise",
-    ]
-    ordered_keys = [k for k in preferred_order if k in metric_keys] + [
-        k for k in metric_keys if k not in preferred_order
-    ]
 
     # Reinitialize containers dynamically (overrides earlier static init)
     daily_data = defaultdict(lambda: {k: 0 for k in metric_keys})
     weekly_data = defaultdict(lambda: {k: 0 for k in metric_keys})
-
-    def metric_label(key: str) -> str:
-        mapping = {
-            "steps": "Steps",
-            "distance": "Distance (km)",
-            "calories": "Active Calories (kcal)",
-            "basal_calories": "Basal Calories (kcal)",
-            "flights": "Flights",
-            "exercise": "Exercise (minutes)",
-        }
-        return mapping.get(key, key.replace("_", " ").title())
-
-    def format_cell(key: str, value: float):
-        if key == "distance":
-            return format_number(round(value, 2))
-        return int(round(value))
 
     for record in root.findall(".//Record"):
         dtype = record.attrib.get("type")
@@ -448,10 +441,12 @@ def export_excel(jwt_token=None):
                 item["exportDate"] = export_date_str
             summaries_payload.append(item)
 
-        _post_json(
+        _post_in_batches(
             f"{BACKEND}/api/apple-health/daily-summaries",
-            {"summaries": summaries_payload},
+            summaries_payload,
             jwt_token,
+            chunk_size=100,
+            payload_builder=lambda chunk: {"summaries": chunk},
         )
 
         # 3) activity summaries (filtered by date range if possible)
@@ -459,97 +454,18 @@ def export_excel(jwt_token=None):
         for rec in root.findall(".//ActivitySummary"):
             attrs = dict(rec.attrib)
             act_summaries.append(attrs)
-        _post_json(
+        _post_in_batches(
             f"{BACKEND}/api/apple-health/activity-summaries",
-            {"exportDate": export_date_str, "summaries": act_summaries},
+            act_summaries,
             jwt_token,
+            chunk_size=100,
+            payload_builder=lambda chunk: {
+                "exportDate": export_date_str,
+                "summaries": chunk,
+            },
         )
 
-    # ---- Create Excel file ----
-    wb = Workbook()
-
-    # --- Daily Sheet ---
-    daily_sheet = wb.active
-    daily_sheet.title = "Daily Totals"
-    daily_sheet.append(["Date"] + [metric_label(k) for k in ordered_keys])
-    for day in sorted(daily_data.keys()):
-        data = daily_data[day]
-        row = [day.isoformat()] + [format_cell(k, data[k]) for k in ordered_keys]
-        daily_sheet.append(row)
-
-    # --- Weekly Sheet ---
-    weekly_sheet = wb.create_sheet(title="Weekly Totals")
-    weekly_sheet.append(["Week"] + [metric_label(k) for k in ordered_keys])
-    for week in sorted(weekly_data.keys()):
-        data = weekly_data[week]
-        row = [week] + [format_cell(k, data[k]) for k in ordered_keys]
-        weekly_sheet.append(row)
-
-    # --- Daily Statistics Sheet ---
-    stats_sheet = wb.create_sheet(title="Daily Stats Summary")
-    stats_sheet.append(
-        [
-            "Metric",
-            "Sum",
-            "Max",
-            "Day Hit Max",
-            "Min",
-            "Day Hit Min",
-            "Median",
-            "Average",
-        ]
-    )
-
-    # Prepare lists and corresponding dates dynamically
-    all_dates = list(daily_data.keys())
-    series_by_key = {k: [data[k] for data in daily_data.values()] for k in ordered_keys}
-
-    def get_day_of_value(lst, dates, value):
-        """Return the first date corresponding to the value"""
-        for v, d in zip(lst, dates):
-            if v == value:
-                return d.isoformat()
-        return ""
-
-    metrics = [(metric_label(k), series_by_key[k], all_dates) for k in ordered_keys]
-
-    for name, lst, dates in metrics:
-        max_val = max(lst)
-        min_val = min(lst)
-        stats_sheet.append(
-            [
-                name,
-                format_number(round(sum(lst), 2)),
-                format_number(round(max_val, 2)),
-                get_day_of_value(lst, dates, max_val),
-                format_number(round(min_val, 2)),
-                get_day_of_value(lst, dates, min_val),
-                format_number(round(statistics.median(lst), 2)),
-                format_number(round(statistics.mean(lst), 2)),
-            ]
-        )
-    first_export_date = min(daily_data.keys()).isoformat()
-    latest_export_date = max(daily_data.keys()).isoformat()
-    stats_sheet.append(
-        [
-            "Date Range",
-            "Start Date",
-            first_export_date,
-            "End Date",
-            latest_export_date,
-        ]
-    )
-    output_xlsx = f"activity_summaries/{first_export_date}-{latest_export_date}.xlsx"
-    # ---- Save Excel ----
-    wb.save(output_xlsx)
-    print(f"Daily, weekly, and daily stats summary exported to '{output_xlsx}'")
-
-
-# --- 1️⃣ Parse CMD Arguments ---
-if len(sys.argv) != 3:
-    print("Usage: python daily_stats.py <start_date> <end_date>")
-    print("Example: python daily_stats.py 2025-08-01 2025-08-31")
-    sys.exit(1)
+    print("All summaries processed, posting complete.")
 
 
 def _sigint_handler(_signum, _frame):
