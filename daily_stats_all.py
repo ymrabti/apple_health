@@ -335,7 +335,13 @@ def export_excel(jwt_token=None):
 
     # Gather meta
     me_elem = root.find(".//Me")
+    weight = root.find(".//Record[@type='HKQuantityTypeIdentifierBodyMass']")
+    height = root.find(".//Record[@type='HKQuantityTypeIdentifierHeight']")
     me_attrs = me_elem.attrib if me_elem is not None else {}
+    if weight is not None:
+        me_attrs["weightInKilograms"] = weight.attrib.get("value")
+    if height is not None:
+        me_attrs["heightInCentimeters"] = height.attrib.get("value")
     export_date_str = _derive_export_date_str()
     # for record in root.findall(".//ActivitySummary"):
     #     print(record.attrib)
