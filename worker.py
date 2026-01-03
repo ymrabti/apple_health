@@ -68,7 +68,7 @@ class HealthDataProcessor:
         except urlerror.URLError as e:
             print(f"❌ POST {endpoint} failed: {e.reason}")
             return False
-        except Exception as e:
+        except (ValueError, TypeError, OSError) as e:
             print(f"❌ POST {endpoint} failed: {e}")
             return False
 
@@ -172,7 +172,7 @@ class HealthDataProcessor:
         except ET.ParseError as e:
             print(f"❌ XML Parse Error in {xml_path.name}: {e}")
             return False
-        except Exception as e:
+        except (OSError, IOError, AttributeError, KeyError, ValueError) as e:
             print(f"❌ Error processing {xml_path.name}: {e}")
             import traceback
 
@@ -190,7 +190,7 @@ class HealthDataProcessor:
             if val and "T" in val:
                 val = val.split("T")[0]
             return val[:10] if val else datetime.now().strftime("%Y-%m-%d")
-        except Exception:
+        except (AttributeError, KeyError, TypeError):
             return datetime.now().strftime("%Y-%m-%d")
 
     def _aggregate_daily(self, root):
@@ -305,7 +305,7 @@ class HealthFileHandler(FileSystemEventHandler):
 
         except json.JSONDecodeError as e:
             print(f"❌ Invalid JSON in job file {job_file}: {e}")
-        except Exception as e:
+        except (OSError, IOError, KeyError, ValueError, FileNotFoundError) as e:
             print(f"❌ Error processing job {job_file}: {e}")
             import traceback
 
