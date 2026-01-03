@@ -1,3 +1,4 @@
 # Dependencies for Apple Health export utilities
 openpyxl==3.1.5
 keyring>=24.3.1
+watchdog==3.0.0

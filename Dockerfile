@@ -1,21 +1,23 @@
-# Use a lightweight base image with Chrome
-FROM debian:bullseye-slim
-# docker build -t safe-chrome .
-# docker run -it --rm --shm-size=1gb safe-chrome
+FROM python:3.11-slim
 
-# Avoid interactive prompts during install
-ENV DEBIAN_FRONTEND=noninteractive
+WORKDIR /app
 
-# Install dependencies
-RUN apt-get update && apt-get install -y   wget   gnupg   ca-certificates   fonts-liberation   libappindicator3-1   libasound2   libatk-bridge2.0-0   libatk1.0-0   libcups2   libdbus-1-3   libgdk-pixbuf2.0-0   libnspr4   libnss3   libx11-xcb1   libxcomposite1   libxdamage1   libxrandr2   xdg-utils   curl   unzip   --no-install-recommends &&   rm -rf /var/lib/apt/lists/*
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    gcc \
+    libxml2-dev \
+    libxslt-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-# Download and install the latest stable Chrome
-RUN wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb &&  apt-get update &&  apt-get install -y /tmp/chrome.deb &&  rm /tmp/chrome.deb
+# Copy requirements
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Run as non-root user for extra safety
-RUN useradd -m chromeuser
-USER chromeuser
+# Copy application code
+COPY worker.py .
 
-# Entrypoint
-# CMD [ "google-chrome", "--no-sandbox", "--disable-dev-shm-usage", "--disable-extensions", "--incognito", "--disable-gpu" ]
-CMD [ "google-chrome", "--headless", "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--dump-dom", "https://example.com" ]
+# Create directories
+RUN mkdir -p /data/uploads /data/processed
+
+# Run the worker
+CMD ["python", "-u", "worker.py"]
