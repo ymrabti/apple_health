@@ -18,7 +18,7 @@ from watchdog.events import FileSystemEventHandler
 
 # Environment configuration
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:7384")
-FOLDER = "C:/Users/youmt/youmtinet/dev/portfolio/side-projects/apple-health/apple_health_webservice"
+FOLDER = "../apple_health_webservice"
 WATCH_DIR = Path(
     os.getenv(
         "WATCH_DIR",
