@@ -8,18 +8,29 @@ import time
 import json
 import shutil
 from pathlib import Path
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
 import xml.etree.ElementTree as ET
 from datetime import datetime
 from collections import defaultdict
 import urllib.request as urlrequest
 import urllib.error as urlerror
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # Environment configuration
-BACKEND_URL = os.getenv("BACKEND_URL", "http://webservice:7384")
-WATCH_DIR = Path(os.getenv("WATCH_DIR", "/data/uploads"))
-PROCESSED_DIR = Path(os.getenv("PROCESSED_DIR", "/data/processed"))
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:7384")
+FOLDER = "C:/Users/youmt/youmtinet/dev/portfolio/side-projects/apple-health/apple_health_webservice"
+WATCH_DIR = Path(
+    os.getenv(
+        "WATCH_DIR",
+        f"{FOLDER}/static",
+    )
+)
+PROCESSED_DIR = Path(
+    os.getenv(
+        "PROCESSED_DIR",
+        f"{FOLDER}/static/processed",
+    )
+)
 
 # Ensure directories exist
 WATCH_DIR.mkdir(parents=True, exist_ok=True)
@@ -62,7 +73,12 @@ class HealthDataProcessor:
             return False
 
     def _post_in_batches(
-        self, endpoint: str, items: list, token: str, chunk_size: int = 100
+        self,
+        endpoint: str,
+        items: list,
+        token: str,
+        chunk_size: int = 100,
+        export_date: str = None,
     ) -> bool:
         """Post data in batches to avoid payload size limits."""
         if not items:
@@ -80,6 +96,8 @@ class HealthDataProcessor:
                 payload = {"summaries": chunk}
             elif "activity-summaries" in endpoint:
                 payload = {"summaries": chunk}
+                if export_date:
+                    payload["exportDate"] = export_date
             else:
                 payload = {"items": chunk}
 
@@ -105,6 +123,12 @@ class HealthDataProcessor:
             # Extract metadata
             me_elem = root.find(".//Me")
             me_attrs = me_elem.attrib if me_elem is not None else {}
+            weight = root.find(".//Record[@type='HKQuantityTypeIdentifierBodyMass']")
+            height = root.find(".//Record[@type='HKQuantityTypeIdentifierHeight']")
+            if weight is not None:
+                me_attrs["weightInKilograms"] = weight.attrib.get("value")
+            if height is not None:
+                me_attrs["heightInCentimeters"] = height.attrib.get("value")
 
             # Extract export date
             export_date = self._get_export_date(root)
@@ -131,8 +155,12 @@ class HealthDataProcessor:
                 dict(rec.attrib) for rec in root.findall(".//ActivitySummary")
             ]
             if activity_summaries:
-                payload = {"exportDate": export_date, "summaries": activity_summaries}
-                self._post_json("/api/apple-health/activity-summaries", payload, token)
+                self._post_in_batches(
+                    "/api/apple-health/activity-summaries",
+                    activity_summaries,
+                    token,
+                    export_date=export_date,
+                )
             else:
                 print("⚠️  No activity summaries found")
 
