@@ -22,7 +22,7 @@ FOLDER = "../apple_health_webservice"
 WATCH_DIR = Path(
     os.getenv(
         "WATCH_DIR",
-        f"{FOLDER}/static",
+        f"{FOLDER}/static/health_imports",
     )
 )
 PROCESSED_DIR = Path(
@@ -139,11 +139,6 @@ class HealthDataProcessor:
             daily_data = self._aggregate_daily(root)
             print(f"📊 Found {len(daily_data)} days of data")
 
-            # Post user info
-            print("\n👤 Posting user info...")
-            user_payload = {"exportDate": export_date, "attributes": me_attrs}
-            self._post_json("/api/apple-health/user-infos", user_payload, token)
-
             # Post daily summaries
             print("\n📈 Posting daily summaries...")
             summaries = self._build_summaries(daily_data, export_date)
@@ -163,6 +158,11 @@ class HealthDataProcessor:
                 )
             else:
                 print("⚠️  No activity summaries found")
+
+            # Post user info
+            print("\n👤 Posting user info...")
+            user_payload = {"exportDate": export_date, "attributes": me_attrs}
+            self._post_json("/api/apple-health/user-infos", user_payload, token)
 
             print("\n" + "=" * 60)
             print("✅ Successfully processed " + xml_path.name)
