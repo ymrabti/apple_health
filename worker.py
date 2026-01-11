@@ -22,13 +22,13 @@ FOLDER = "../apple_health_webservice"
 WATCH_DIR = Path(
     os.getenv(
         "WATCH_DIR",
-        f"{FOLDER}/static/health_imports",
+        f"{FOLDER}/data/health_imports",
     )
 )
 PROCESSED_DIR = Path(
     os.getenv(
         "PROCESSED_DIR",
-        f"{FOLDER}/static/processed",
+        f"{FOLDER}/data/processed",
     )
 )
 
@@ -320,8 +320,8 @@ def main():
     print("🏥 Apple Health Data Worker")
     print("=" * 60)
     print(f"📍 Backend: {BACKEND_URL}")
-    print(f"📂 Watch dir: {WATCH_DIR}")
-    print(f"📂 Processed dir: {PROCESSED_DIR}")
+    print(f"📂 Watch dir: {os.path.abspath(WATCH_DIR)}")
+    print(f"📂 Processed dir: {os.path.abspath(PROCESSED_DIR)}")
     print("=" * 60 + "\n")
 
     processor = HealthDataProcessor(BACKEND_URL)
