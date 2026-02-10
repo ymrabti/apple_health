@@ -17,7 +17,7 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
 # Environment configuration
-BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:7384")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:33003")
 FOLDER = "../apple_health_webservice"
 WATCH_DIR = Path(
     os.getenv(
